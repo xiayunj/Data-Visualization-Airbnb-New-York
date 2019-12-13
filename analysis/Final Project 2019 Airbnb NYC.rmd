@@ -1,0 +1,973 @@
+---
+title: "2019 Airbnb Analysis - New York City"
+author: "Group 7: Yunjun Xia, Shuyu Huang, Xu Xu, Xiaoyun Zhu"
+date: "12/12/2019"
+output: html_document
+---
+
+
+
+The raw data, the cleaned data, and the R Markdown file are located in the following github repository:
+
+github: https://github.com/xiayunj/Data-Visualization-Airbnb-New-York.git
+
+
+## I. Introduction
+
+Airbnb is an App beginning in 2008. It is a platform for hosts to provide houses and spaces for travelers to stay in during their vacation. Airbnb is an additional choice besides traditional hotels. The former makes travelers feel more like a home and usually higher quality based on similar rates. According to the survey on Clever: Airbnb’s Impact on the Hotel Industry, “60% of travelers who use both Airbnb and hotels prefer Airbnb over comparable hotels when going on vacation.” (Source link: https://listwithclever.com/real-estate-blog/airbnb-vs-hotels-study/).
+
+
+We decided to focus our analysis on New York City’s airbnb data because it is one of the most world-famous metropolitans that attracts billions of visitors. Also we currently live in New York and we are interested in researching the Airbnb rental market here.
+
+
+This report focuses on the Airbnb listings in New York City summarised in 2019 from three aspects: room types, prices, and ratings/comments. In the results part, we conducted an in-depth analysis of Airbnb listing data in NYC regarding the three aspects mentioned before and gained some insights that we want to share.
+In the interactivity part of the report, we further explore these three aspects in a more flexible and user-friendly way to help users have better senses of the questions we are focusing on and also provide useful information based on these three criteria.
+
+1.Room Type - How do the room types distribute across neighborhoods quantitatively and spatially? Is there any relationship between room types and properties’ number of days available in a year?
+
+2.Price-  Based on two major room types(entire home/apartment & private room), is price differs by different neighborhoods or transportation options? 
+
+3.Ratings/comments- Is there any distribution patterns of rating scores in each neighborhood?  How do emotions of users change over time for their airbnb experience?
+
+
+
+## II. Data sources
+The data is about 2019 Airbnb Listings in New York City. We downloaded data from Inside Airbnb (http://insideairbnb.com/get-the-data.html), and NYC OpenData (https://data.cityofnewyork.us/City-Government/Community-Districts/yfnk-k7r4). Our original data source includes 3 files: 
+
+1. Airbnb Listings data(about 48000 records) (listings.csv); 
+
+2. Reviews for each Airbnb listing(about 1 million records) (reviews.csv);
+
+3. NYC Community Districts MAP (Community Districts.geojson).
+
+Dataset 1 contains 106 variables, with slightly more categorical variables than numeric ones. Dataset 2 contains 6 variables and the most important one for analysis is the detailed comments. Since there are so many records in dataset 2, one issue appears to be that processing all of them would take a huge amount of computing time. Therefore, we need to do random sampling on the entire data. Another issue about our raw data is that there exists missing values in both datasets and including missing values of numeric variables in our analysis and exploration would result in calculation error. Therefore, we have to remove them under necessary conditions. In addition, there exists some listings with zero price which should not be included in our analysis, so we removed those data points. We also get rid of the listings with “availability_365” = 0, which means that these properties are not available now and there is no point for analyzing them.
+
+
+Also, for the spatial plots in this project, we requested API key for credential on Google Map and assigned the individual communities to corresponding community districts according to the information provided on NYC Planning (https://communityprofiles.planning.nyc.gov/queens/12).
+
+
+## III. Data transformation
+The two datasets we downloaded are in csv files, so we imported them into R using read_csv(). 
+
+To request API from Google Map and imported into R, we used register_google(). 
+
+The community districts map we downloaded is in GeoJSON file, so we imported them into R using geojson_read() from geojsonio library. 
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(choroplethr)
+library(ggplot2)
+library(tidyr)
+library(ggmap)
+library(readr)
+library(lubridate)
+library(dplyr)
+library(data.table)
+library(ggrepel)
+library(tidyverse)
+library(grid)
+library(gridExtra)
+library(geojsonio)
+library(broom)
+library(mapproj)
+library(leaflet)
+library(tigris)
+library(ggthemes)
+library(shiny)
+library(textcat)
+
+library(extracat)
+library(MASS)
+library(naniar)
+library(vcd)
+library(sentimentr)
+library(textclean)
+library(tidytext)
+library(RColorBrewer)
+library(gplots)
+library(textdata)
+library(stringr)
+```
+
+```{r raw_data_import, include=FALSE}
+listings <- read_csv('listings.csv')
+reviews<-read_csv('reviews.csv')
+```
+
+```{r data_cleaning, include=FALSE}
+airbnb <- listings[!(listings$availability_365 == 0),
+                         c('id','listing_url','name','transit','host_response_time',
+                         'host_response_rate','neighbourhood_cleansed',
+                         'neighbourhood_group_cleansed','zipcode',
+                         'latitude','longitude','room_type','price',
+                         'cleaning_fee','availability_365','number_of_reviews',
+                         'review_scores_rating','review_scores_accuracy',
+                         'review_scores_cleanliness','review_scores_checkin',
+                         'review_scores_communication','review_scores_location',
+                         'review_scores_value')]
+airbnb$host_response_time[which(airbnb$host_response_rate=='N/A')] = NA
+airbnb$host_response_time<- as.factor(airbnb$host_response_time)
+airbnb$host_response_rate <- as.numeric(gsub('[\\%,]','',airbnb$host_response_rate))
+airbnb$neighbourhood_cleansed <-as.factor(airbnb$neighbourhood_cleansed)
+airbnb$neighbourhood_group_cleansed <-as.factor(airbnb$neighbourhood_group_cleansed)
+airbnb$zipcode <- as.factor(airbnb$zipcode)
+airbnb$room_type<-as.factor(airbnb$room_type)
+airbnb[,15:23] = sapply(airbnb[,15:23], as.numeric)
+airbnb$price <- as.numeric(gsub('[\\$,]','',airbnb$price))
+airbnb$cleaning_fee <- as.numeric(gsub('[\\$,]','',airbnb$cleaning_fee))
+airbnb <- airbnb %>% filter(price > 0)
+```
+
+
+## IV. Missing values
+
+We plot a visna graph to investigate the missing patterns in variables that involved in following data analysis.
+
+
+For missing row patterns, we observe that most of the rows don't have missing values. Majority of rows that with missing values only have missings in variable ```transit```.  
+
+
+For missing column patterns, we find that there are 8 columns having missing values. Variable ```transit``` has the highest number of missing values, with about 17% of the value missing. Since “transit” is an entry that needs to be manually entered by property owners, we think the laziness of some owners lead to the missing values in ```transit```. Other 7 variables of ```comments```, ```location_scores```(denoted as "locatin_scrs" in the plot), ```checkin_scores```(denoted as "checkin_scrs" in the plot), ```communication_scores```(denoted as "cmmnctn_scrs" in the plot), ```clean_scores```,```accuracy_scores```(denoted as "accuracy_scrs" in the plot)  and ```review_scores```(denoted as "rvw_scores" in the plot) only have missing values in very few rows hence their missing distribution are not reflected in the bar graph on the bottom.
+
+
+```{r 1Missing, echo=FALSE, fig.height=6, fig.width=8, warning=FALSE}
+airbnb_plot <- airbnb[c("id","transit", "price", "neighbourhood_group_cleansed","review_scores_rating","review_scores_accuracy","review_scores_cleanliness","review_scores_checkin","review_scores_communication","review_scores_location","availability_365","room_type","neighbourhood_cleansed", "longitude","latitude")]
+airbnb_plot <- airbnb_plot %>% rename(!!"rvw_scores" := review_scores_rating, !!"accuracy_scores" := review_scores_accuracy, !!"clean_scores" := review_scores_cleanliness,!!"checkin_scores" := review_scores_checkin, !!"communication_scores" := review_scores_communication, !!"location_scores" := review_scores_location, !!"borough" := neighbourhood_group_cleansed, !!"sub_area" := neighbourhood_cleansed, !!"availablility" := availability_365)
+reviews_plot <- reviews[c("listing_id", "date", "comments")]
+total_plot <- merge(airbnb_plot, reviews_plot, by.x="id", by.y="listing_id")
+visna(total_plot, sort = "b") 
+```
+
+
+## V. Results
+
+
+### Part 1 - Room Type
+
+The first aspect we are going to analyze is the room type. Here are the four types of rooms in all the Airbnb listings: 
+
+1. entire home/apt - an entire place, usually includes a bedroom, a bathroom, a kitchen, and a separate, dedicated entrance; 
+
+2. private room - the traveller has own private room for sleeping and may share some spaces with others; 
+
+3. shared room - sleeping in a space that is shared with others and share the entire space with other people; 
+
+4. hotel room.
+
+First, we would like to have a general idea of  the room type distribution across the five boroughs in New York City, and we chose to use the bar chart below to show the result.
+
+
+
+
+```{r 2,echo=FALSE, fig.heihgt=8, fig.width=8, warning=FALSE}
+#room types vs. neighbourhoods plot
+new <- airbnb %>%
+  group_by(neighbourhood_group_cleansed, room_type) %>%
+  summarise(count = n()) %>%
+  mutate(room_count = count) %>%
+  ungroup()
+
+ggplot(new, aes(x=neighbourhood_group_cleansed, y=room_count, fill = room_type)) + 
+  geom_bar(position = "dodge", stat = "identity") + 
+  labs(title = "Room Type Distribution By Neighbourhood",fill='Room Type') + 
+  xlab("") + 
+  ylab("Number of Rooms") +
+  theme(legend.title=element_blank()) +
+  theme_grey(16)
+```
+
+Entire home/apt and private room are the two room types with maximum number of offerings in all five neighborhoods. These two major room types constitutes over 90% of all the listings. In Manhattan, the number of entire home/apt offerings are about twice the number of private room offerings; in Brooklyn and Staten Island, the numbers of entire home/apt and private room offerings are about the same; in Bronx and Queens, there are more private room offerings than entire home/apt offerings.
+
+
+After analyzing the quantitative distribution of room types, we are also interested in how different room types distributed spatially, so we also plot the following spatial distributions of room types in five boroughs.
+
+
+```{r google_map_register, warning=FALSE, include=FALSE}
+register_google(key='AIzaSyCQ7yUqSq-AfZ5a64R6CbCodL-g9qNhZ8w')
+nyc<- get_map("New York City",zoom=11)
+nyc2<- get_map("New York City",zoom=10)
+mht<- get_map("Manhattan",zoom=12)
+qns<- get_map("Queens",zoom=11)
+brkl<- get_map("Brooklyn",zoom=12)
+brx<- get_map("Bronx",zoom=12)
+sti<- get_map("Staten Island",zoom=12)
+```
+
+```{r borough_division, include=FALSE}
+manhattan<- airbnb[which(airbnb$neighbourhood_group_cleansed == 'Manhattan'),]
+queens<-airbnb[which(airbnb$neighbourhood_group_cleansed == 'Queens'),]
+brooklyn<-airbnb[which(airbnb$neighbourhood_group_cleansed == 'Brooklyn'),]
+bronx<-airbnb[which(airbnb$neighbourhood_group_cleansed == 'Bronx'),]
+staten_island<-airbnb[which(airbnb$neighbourhood_group_cleansed == 'Staten Island'),]
+```
+
+```{r airbnb_distribution_room_type, include=FALSE}
+g<-ggmap(nyc)+
+  geom_point(data=airbnb,aes(x=longitude,y=latitude,color=room_type),size=0.2,alpha=0.2)+
+  ggtitle('2019 Airbnb Room Type Distribution in New York City')+
+  labs(x='Longitutde',y='Latitude')+
+  scale_color_viridis_d(name='Room Type')
+
+g1<-ggmap(mht)+
+  geom_point(data=manhattan,aes(x=longitude,y=latitude,color=room_type),size=0.2,alpha=0.3)+
+  ggtitle('2019 Airbnb Room Type Distribution in Manhattan')+
+  labs(x='Longitutde',y='Latitude')+
+  scale_color_viridis_d(name='Room Type')
+
+g2<-ggmap(qns)+
+  geom_point(data=queens,aes(x=longitude,y=latitude,color=room_type),size=0.2,alpha=0.3)+
+  ggtitle('2019 Airbnb Room Type Distribution in Queens')+
+  labs(x='Longitutde',y='Latitude')+
+  scale_color_viridis_d(name='Room Type')
+
+g3<-ggmap(brkl)+
+  geom_point(data=brooklyn,aes(x=longitude,y=latitude,color=room_type),size=0.2,alpha=0.3)+
+  ggtitle('2019 Airbnb Room Type Distribution in Brooklyn')+
+  labs(x='Longitutde',y='Latitude')+
+  scale_color_viridis_d(name='Room Type')
+
+g4<-ggmap(brx)+
+  geom_point(data=bronx,aes(x=longitude,y=latitude,color=room_type),size=0.2,alpha=0.3)+
+  ggtitle('2019 Airbnb Room Type Distribution in Bronx')+
+  labs(x='Longitutde',y='Latitude')+
+  scale_color_viridis_d(name='Room Type')
+
+g5<-ggmap(sti)+
+  geom_point(data=staten_island,aes(x=longitude,y=latitude,color=room_type),size=0.2,alpha=0.3)+
+  ggtitle('2019 Airbnb Room Type Distribution in Staten Island')+
+  labs(x='Longitutde',y='Latitude')+
+  scale_color_viridis_d(name='Room Type')
+```
+
+```{r 3plot_distribution_room_type, echo=FALSE, fig.height=16, fig.width=11, warning=FALSE}
+grid.arrange(g,g1,g2,g3,g4,g5,nrow=3,ncol=2)
+```
+
+We can find that in Manhattan, majority of the private rooms are located in uptown areas, and most of the hotel room listings are in midtown. Entire room/apt are listed all over Manhattan. Most of the listings in Brooklyn are in downtown Brooklyn, which makes sense as it is close to Manhattan. Majority of the listings in Queens are in Long Island City, which is also close to Manhattan. There are no hotel room listings in Bronx and Staten Island.  We can also see that listings in Staten Island are concentrated in the northeast corner. There are no concentrations of listings in Bronx, and they are sparsely distributed across Bronx, which seems intuitive, as Bronx is less densely populated compared with Manhattan, Brooklyn and Queens.
+
+
+Then, to find out whether there exists any relationship between room types and properties’ number of days available in a year, we conducted the following plot categorized by room types.
+
+```{r 4,fig.height = 7, fig.width = 10,echo=FALSE, warning=FALSE}
+#availability distribution for different room types plot
+airbnb$availability_365_level[airbnb$availability_365<30] = "1-30"
+airbnb$availability_365_level[airbnb$availability_365>=30 & airbnb$availability_365<60] = "30-60"
+airbnb$availability_365_level[airbnb$availability_365>=60 & airbnb$availability_365<90] = "60-90"
+airbnb$availability_365_level[airbnb$availability_365>=90 & airbnb$availability_365<120] = "90-120"
+airbnb$availability_365_level[airbnb$availability_365>=120 & airbnb$availability_365<150] = "120-150"
+airbnb$availability_365_level[airbnb$availability_365>=150 & airbnb$availability_365<180] = "150-180"
+airbnb$availability_365_level[airbnb$availability_365>=180 & airbnb$availability_365<210] = "180-210"
+airbnb$availability_365_level[airbnb$availability_365>=210 & airbnb$availability_365<240] = "210-240"
+airbnb$availability_365_level[airbnb$availability_365>=240 & airbnb$availability_365<270] = "240-270"
+airbnb$availability_365_level[airbnb$availability_365>=270 & airbnb$availability_365<300] = "270-300"
+airbnb$availability_365_level[airbnb$availability_365>=300 & airbnb$availability_365<330] = "300-330"
+airbnb$availability_365_level[airbnb$availability_365>=330 & airbnb$availability_365<360] = "330-360"
+airbnb$availability_365_level[airbnb$availability_365>=360] = "360+"
+
+airbnb$availability_365_level = factor(airbnb$availability_365_level, levels = c("1-30", "30-60", "60-90", "90-120", "120-150", "150-180", "180-210", "210-240", "240-270", "270-300", "300-330", "330-360", "360+"))
+
+new2 <- airbnb %>%
+  group_by(availability_365_level, room_type) %>%
+  summarise(count = n()) %>%
+  mutate(room_count2 = count) %>%
+  ungroup()
+
+ggplot(new2, aes(x=availability_365_level, y=room_count2)) + 
+  facet_wrap(. ~ room_type) +
+  geom_bar(stat = "identity", fill="lightblue", color="blue") + 
+  labs(title = "Number of Days Available for Staying in 2019") + 
+  xlab("number of days") + 
+  ylab("number of listings") +
+  theme_grey(16) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+
+```
+
+From the graph, we can see that Entire home/apt and private room have similar distribution in number of days available for staying. They both have a peak at the right-hand-side of the histogram, which corresponds to the number of days available >300 (number of listings for 360+ available days is quite high although the height of the corresponding bar is not tall, because that bar has shorter width than all the other bars). This makes sense because some properties are just for leasing purposes. For entire home/apt, there is another peak at the left-hand-side of the histogram, which corresponds to the number of days available <30. We can interpret this peak to be days when the owners are out of town. For private room, the number of days available between 1 and 90 days all have quite high frequency. We think this is because the owners of private rooms usually have more flexibility in traveling compared to owners of entire home and therefore they offer their rooms for more days in a year.
+
+
+For visitors to New York City, if they see some listings with fewer reviews than others, it does not necessarily mean the listing is not attractive. Those airbnb listings may just have fewer available days so fewer people got chances to stay at and comment on them.
+
+
+
+### Part 2 - Price
+
+From the above analysis concerning the room types, we get to know that the major two room types for Airbnb listings are entire home/ apt and private room. Since there is no point of comparing the price of entire home/apt in a region with the price of private room in another region, the following analysis about the price in this part will all be faceted on these two major room types. 
+
+
+First, let’s get a general idea about the price range distribution. We divided the Airbnb price range into five subranges: less than \$100, between \$100 and \$200, between \$200 and \$300, between \$300 and \$400, and greater than \$400. By counting the number of Airbnbs in such subranges grouped by the two major room types, we draw a bar chart as follows.
+
+```{r 4half_price, fig.width=8, fig.height = 5,echo=FALSE, warning=FALSE}
+temp_price_airbnb<-airbnb[,c('room_type','price')] %>% 
+  filter((room_type == 'Entire home/apt') | (room_type == 'Private room') )
+temp_price_en<-temp_price_airbnb %>% filter(room_type=='Entire home/apt')
+temp_price_pr<- temp_price_airbnb %>% filter(room_type=='Private room')
+
+temp_price_count<-c(nrow(temp_price_en[which(temp_price_en$price <= 100),]),
+nrow(temp_price_en[which((temp_price_en$price <= 200) & (temp_price_en$price > 100)),]),
+nrow(temp_price_en[which((temp_price_en$price <= 300) & (temp_price_en$price > 200)),]),
+nrow(temp_price_en[which((temp_price_en$price <= 400) & (temp_price_en$price > 300)),]),
+nrow(temp_price_en[which(temp_price_en$price > 400),]),
+
+nrow(temp_price_pr[which(temp_price_pr$price <= 100),]),
+nrow(temp_price_pr[which((temp_price_pr$price <= 200) & (temp_price_pr$price > 100)),]),
+nrow(temp_price_pr[which((temp_price_pr$price <= 300) & (temp_price_pr$price > 200)),]),
+nrow(temp_price_pr[which((temp_price_pr$price <= 400) & (temp_price_pr$price > 300)),]),
+nrow(temp_price_pr[which(temp_price_pr$price > 400),]))
+
+temp_new <- data.frame(range = c('(0,100]','(100,200]','(200,300]','(300,400]','400+',
+                                 '(0,100]','(100,200]','(200,300]','(300,400]','400+'),
+                       room_type = c('Entire home/apt','Entire home/apt','Entire home/apt',
+                                     'Entire home/apt','Entire home/apt',
+                                     'Private room','Private room','Private room',
+                                     'Private room','Private room'), 
+                       count = temp_price_count)
+
+ggplot(temp_new, aes(x=range, y=count, fill = room_type)) + 
+  geom_bar(position = "dodge", stat = "identity") + 
+  labs(title = "Price Range Distribution by Room Type",fill='Room Type') + 
+  xlab("Price Range(USD)") + 
+  ylab("Number of Airbnbs") +
+  theme(legend.title=element_blank()) +
+  theme_grey(16)
+```
+
+From the bar chart, we can find that most of the Airbnbs in NYC are distributed in price range less than \$200. Particularly, most of the Airbnbs which are less than \$100 are private rooms while most of the Airbnbs which are between \$100 and \$200 are entire home/apt.
+
+Also, there are only few private rooms with prices greater than \$300. The number of private rooms exceeds the number of entire homes/apts only in the price range less than $100. There are more entire homes/apts than private room in other four ranges.
+
+
+
+
+```{r geojson_import, include=FALSE}
+CD<-geojson_read('Community Districts.geojson',what='sp')
+CD_fortified <- fortify(CD, region = "boro_cd")
+```
+
+
+```{r map_data_clean, include=FALSE}
+#Community District Division: 
+cd301<-c('East Williamsburg', 'Greenpoint', 'Northside', 'Southside', 'Williamsburg')
+cd302<-c('Boerum Hill', 'Brooklyn Heights', 'Clinton Hill', 'Downtown Brooklyn', 'DUMBO', 'Fort Greene', 'Fulton Ferry', 'Navy Yard', 'Vinegar Hill')
+cd303<-c('Bedford-Stuyvesant', 'Stuyvesant Heights', 'Tompkins Park North')
+cd304<-c('Bushwick')
+cd305<-c('Broadway Junction', 'City Line', 'Cypress Hills', 'East New York', 'Highland Park', 'New Lots', 'Spring Creek', 'Starrett City')
+cd306<-c('Carroll Gardens', 'Cobble Hill', 'Columbia St', 'Gowanus', 'Park Slope', 'Red Hook','South Slope')
+cd307<-c('Sunset Park', 'Windsor Terrace')
+cd308<-c('Crown Heights', 'Prospect Heights', 'Weeksville')
+cd309<-c('Crown Heights South', 'Prospect-Lefferts Gardens', 'Wingate')
+cd310<-c('Bay Ridge', 'Dyker Heights', 'Fort Hamilton')
+cd311<-c('Bath Beach', 'Bensonhurst', 'Gravesend', 'Mapleton')
+cd312<-c('Borough Park', 'Kensington', 'Ocean Parkway')
+cd313<-c('Brighton Beach', 'Coney Island', 'Gravesend', 'Homecrest', 'Sea Gate', 'West Brighton')
+cd314<-c('Ditmas Park', 'Flatbush', 'Manhattan Terrace', 'Midwood', 'Ocean Parkway', 'Prospect Park South')
+cd315<-c('Gerritsen Beach', 'Gravesend', 'Homecrest', 'Kings Highway', 'Manhattan Beach', 'Plumb Beach', 'Sheepshead Bay')
+cd316<-c('Broadway Junction', 'Brownsville', 'Ocean Hill')
+cd317<-c('East Flatbush', 'Farragut', 'Flatbush', 'Northeast Flatbush', 'Remsen Village', 'Rugby', 'Erasmus')
+cd318<-c('Bergen Beach', 'Canarsie', 'Flatlands', 'Georgetown', 'Marine Park', 'Mill Basin', 'Mill Island', 'Paerdegat Basin')
+
+cd401<-c('Astoria', 'Astoria Heights', 'Queensbridge', 'Dutch Kills', 'Long Island City', 'Ravenswood', 'Rikers Island', 'Steinway', 'Ditmars Steinway')
+cd402<-c('Blissville', 'Hunters Point', 'Sunnyside', 'Sunnyside Gardens', 'Woodside')
+cd403<-c('East Elmhurst', 'Jackson Heights', 'North Corona')
+cd404<-c('Corona', 'Corona Heights', 'Elmhurst', 'Lefrak City')
+cd405<-c('Glendale', 'Maspeth', 'Middle Village', 'Ridgewood')
+cd406<-c('Forest Hills', 'Forest Hills Gardens', 'Rego Park')
+cd407<-c('Auburndale', 'Bay Terrace', 'Beechhurst', 'Clearview', 'College Point', 'Downtown Flushing', 'East Flushing', 'Flushing', 'Malba', 'Murray Hill', 'Queensboro Hill', 'Waldheim', 'Whitestone')
+cd408<-c('Briarwood', 'Fresh Meadows', 'Hillcrest', 'Holliswood', 'Jamaica', 'Jamaica Estates', 'Jamaica Hills', 'Kew Gardens Hills', 'Pomonok', 'Utopia')
+cd409<-c('Kew Gardens', 'Ozone Park', 'Richmond Hill', 'Woodhaven')
+cd410<-c('Howard Beach', 'Lindenwood', 'Old Howard Beach', 'Ozone Park', 'South Ozone Park')
+cd411<-c('Auburndale', 'Bayside', 'Douglaston', 'Hollis Hills', 'Little Neck', 'Oakland Gardens')
+cd412<-c('Hollis', 'Jamaica Center', 'North Springfield Gardens', 'Rochdale', 'South Jamaica', 'St. Albans')
+cd413<-c('Bellaire', 'Bellerose', 'Brookville', 'Cambria Heights', 'Floral Park', 'Glen Oaks', 'Laurelton', 'New Hyde Park', 'Queens Village', 'Rosedale', 'Springfield Gardens')
+cd414<-c('Arverne', 'Bayswater', 'Belle Harbor', 'Breezy Point', 'Broad Channel', 'Edgemere', 'Far Rockaway', 'Hammels', 'Neponsit', 'Rockaway Park', 'The Rockaways', 'Roxbury', 'Seaside', 'Somerville','Rockaway Beach')
+
+cd101<-c('Battery Park City', 'Civic Center', 'Ellis Island', 'Governors Island', 'Liberty Island', 'South Street Seaport', 'Tribeca', 'Wall Street', 'World Trade Center', 'Financial District')
+cd102<-c('Greenwich Village', 'Hudson Square', 'Little Italy', 'NoHo', 'SoHo', 'South Village', 'West Village', 'Nolita')
+cd103<-c('Chinatown', 'East Village', 'Lower East Side', 'Two Bridges')
+cd104<-c('Chelsea', 'Clinton', 'Hudson Yards',"Hell's Kitchen")
+cd105<-c('Flatiron', 'Gramercy Park', 'Herald Square', 'Midtown', 'Midtown South', 'Times Square', 'Union Square','Flatiron District', 'Theater District')
+cd106<-c('Beekman Place', 'Gramercy Park', 'Gramercy', 'Murray Hill', 'Peter Cooper Village', 'Stuyvesant Town', 'Sutton Place', 'Tudor City', 'Turtle Bay','Kips Bay')
+cd107<-c('Lincoln Square', 'Manhattan Valley', 'Upper West Side')
+cd108<-c('Carnegie Hill', 'Lenox Hill', 'Roosevelt Island', 'Upper East Side', 'Yorkville')
+cd109<-c('Hamilton Heights', 'Manhattanville', 'Morningside Heights', 'West Harlem')
+cd110<-c('Harlem')
+cd111<-c('East Harlem',  "Randall's Island Park", 'Wards Island Park')
+cd112<-c('Inwood', 'Washington Heights', 'Marble Hill')
+
+
+cd201<-c('Melrose', 'Mott Haven', 'Port Morris')
+cd202<-c('Hunts Point', 'Longwood')
+cd203<-c('Claremont', 'Crotona Park East', 'Melrose', 'Morrisania','East Morrisania')
+cd204<-c('Concourse', 'Concourse Village', 'East Concourse', 'Highbridge', 'Mount Eden')
+cd205<-c('Fordham', 'Morris Heights', 'Mount Hope', 'University Heights', 'Tremont')
+cd206<-c('Bathgate', 'Belmont', 'Bronx Park South', 'East Tremont', 'West Farms')
+cd207<-c('Bedford Park', 'Fordham', 'Kingsbridge Heights', 'Norwood', 'University Heights')
+cd208<-c('Fieldston', 'Kingsbridge', 'Marble Hill', 'North Riverdale', 'Riverdale', 'Spuyten Duyvil')
+cd209<-c('Bronx River', 'Castle Hill', 'Clason Point', 'Harding Park', 'Parkchester', 'Soundview', 'Soundview Bruckner', 'Unionport')
+cd210<-c('City Island', 'Co-op City', 'Country Club', 'Edgewater Park', 'Pelham Bay', 'Schuylerville', 'Throgs Neck', 'Westchester Square')
+cd211<-c('Allerton', 'Bronxdale', 'Indian Village', 'Morris Park', 'Pelham Gardens', 'Pelham Parkway', 'Van Nest')
+cd212<-c('Baychester', 'Eastchester', 'Edenwald', 'Olinville', 'Wakefield', 'Williamsbridge', 'Woodlawn',	 'Claremont Village')
+
+
+cd501<-c('Arlington', 'Castleton Corners', 'Clifton', 'Elm Park', 'Fox Hills', 'Graniteville', 'Grymes Hill', 'Howland Hook', 'Livingston', 'Mariners Harbor', 'New Brighton', 'Old Place', 'Park Hill', 'Port Ivory', 'Port Richmond', 'Randall Manor', 'Rosebank', 'Shore Acres', 'Silver Lake', 'St. George', 'Stapleton', 'Sunnyside', 'Tompkinsville', 'Ward Hill', 'West Brighton', 'West New Brighton', 'Westerleigh', 'Willowbrook', 'Fort Wadsworth')
+cd502<-c('Arrochar', 'Bloomfield', "Bull's Head", 'Chelsea', 'Concord', 'Dongan Hills', 'Egbertville', 'Emerson Hill', 'Grant City', 'Grasmere', 'Heartland Village', 'Lighthouse Hill','Manor Heights', 'Midland Beach', 'New Dorp', 'New Dorp Beach', 'New Springville', 'Old Town', 'South Beach', 'Todt Hill', 'Travis')
+cd503<-c('Annadale', 'Arden Heights', 'Bay Terrace', 'Butler Manor', 'Charleston', 'Eltingville', 'Fresh Kills', 'Great Kills', 'Greenridge', 'Huguenot', 'Oakwood', 'Oakwood Beach', 'Oakwood Heights', 'Pleasant Plains', "Prince's Bay", 'Richmond Town', 'Richmondtown', 'Richmond Valley', 'Rossville', 'Sandy Ground', 'Tottenville', 'Woodrow')
+
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd501)&(airbnb$neighbourhood_group_cleansed == 'Staten Island')),"community_district"]<-501
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd502)&(airbnb$neighbourhood_group_cleansed == 'Staten Island')),"community_district"]<-502
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd503)&(airbnb$neighbourhood_group_cleansed == 'Staten Island')),"community_district"]<-503
+
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd101)&(airbnb$neighbourhood_group_cleansed == 'Manhattan')),"community_district"]<-101
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd102)&(airbnb$neighbourhood_group_cleansed == 'Manhattan')),"community_district"]<-102
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd103)&(airbnb$neighbourhood_group_cleansed == 'Manhattan')),"community_district"]<-103
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd104)&(airbnb$neighbourhood_group_cleansed == 'Manhattan')),"community_district"]<-104
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd105)&(airbnb$neighbourhood_group_cleansed == 'Manhattan')),"community_district"]<-105
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd106)&(airbnb$neighbourhood_group_cleansed == 'Manhattan')),"community_district"]<-106
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd107)&(airbnb$neighbourhood_group_cleansed == 'Manhattan')),"community_district"]<-107
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd108)&(airbnb$neighbourhood_group_cleansed == 'Manhattan')),"community_district"]<-108
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd109)&(airbnb$neighbourhood_group_cleansed == 'Manhattan')),"community_district"]<-109
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd110)&(airbnb$neighbourhood_group_cleansed == 'Manhattan')),"community_district"]<-110
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd111)&(airbnb$neighbourhood_group_cleansed == 'Manhattan')),"community_district"]<-111
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd112)&(airbnb$neighbourhood_group_cleansed == 'Manhattan')),"community_district"]<-112
+
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd201)&(airbnb$neighbourhood_group_cleansed == 'Bronx')),"community_district"]<-201
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd202)&(airbnb$neighbourhood_group_cleansed == 'Bronx')),"community_district"]<-202
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd203)&(airbnb$neighbourhood_group_cleansed == 'Bronx')),"community_district"]<-203
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd204)&(airbnb$neighbourhood_group_cleansed == 'Bronx')),"community_district"]<-204
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd205)&(airbnb$neighbourhood_group_cleansed == 'Bronx')),"community_district"]<-205
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd206)&(airbnb$neighbourhood_group_cleansed == 'Bronx')),"community_district"]<-206
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd207)&(airbnb$neighbourhood_group_cleansed == 'Bronx')),"community_district"]<-207
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd208)&(airbnb$neighbourhood_group_cleansed == 'Bronx')),"community_district"]<-208
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd209)&(airbnb$neighbourhood_group_cleansed == 'Bronx')),"community_district"]<-209
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd210)&(airbnb$neighbourhood_group_cleansed == 'Bronx')),"community_district"]<-210
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd211)&(airbnb$neighbourhood_group_cleansed == 'Bronx')),"community_district"]<-211
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd212)&(airbnb$neighbourhood_group_cleansed == 'Bronx')),"community_district"]<-212
+
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd301)&(airbnb$neighbourhood_group_cleansed == 'Brooklyn')),"community_district"]<-301
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd302)&(airbnb$neighbourhood_group_cleansed == 'Brooklyn')),"community_district"]<-302
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd303)&(airbnb$neighbourhood_group_cleansed == 'Brooklyn')),"community_district"]<-303
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd304)&(airbnb$neighbourhood_group_cleansed == 'Brooklyn')),"community_district"]<-304
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd305)&(airbnb$neighbourhood_group_cleansed == 'Brooklyn')),"community_district"]<-305
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd306)&(airbnb$neighbourhood_group_cleansed == 'Brooklyn')),"community_district"]<-306
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd307)&(airbnb$neighbourhood_group_cleansed == 'Brooklyn')),"community_district"]<-307
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd308)&(airbnb$neighbourhood_group_cleansed == 'Brooklyn')),"community_district"]<-308
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd309)&(airbnb$neighbourhood_group_cleansed == 'Brooklyn')),"community_district"]<-309
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd310)&(airbnb$neighbourhood_group_cleansed == 'Brooklyn')),"community_district"]<-310
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd311)&(airbnb$neighbourhood_group_cleansed == 'Brooklyn')),"community_district"]<-311
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd312)&(airbnb$neighbourhood_group_cleansed == 'Brooklyn')),"community_district"]<-312
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd313)&(airbnb$neighbourhood_group_cleansed == 'Brooklyn')),"community_district"]<-313
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd314)&(airbnb$neighbourhood_group_cleansed == 'Brooklyn')),"community_district"]<-314
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd315)&(airbnb$neighbourhood_group_cleansed == 'Brooklyn')),"community_district"]<-315
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd316)&(airbnb$neighbourhood_group_cleansed == 'Brooklyn')),"community_district"]<-316
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd317)&(airbnb$neighbourhood_group_cleansed == 'Brooklyn')),"community_district"]<-317
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd318)&(airbnb$neighbourhood_group_cleansed == 'Brooklyn')),"community_district"]<-318
+
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd401)&(airbnb$neighbourhood_group_cleansed == 'Queens')),"community_district"]<-401
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd402)&(airbnb$neighbourhood_group_cleansed == 'Queens')),"community_district"]<-402
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd403)&(airbnb$neighbourhood_group_cleansed == 'Queens')),"community_district"]<-403
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd404)&(airbnb$neighbourhood_group_cleansed == 'Queens')),"community_district"]<-404
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd405)&(airbnb$neighbourhood_group_cleansed == 'Queens')),"community_district"]<-405
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd406)&(airbnb$neighbourhood_group_cleansed == 'Queens')),"community_district"]<-406
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd407)&(airbnb$neighbourhood_group_cleansed == 'Queens')),"community_district"]<-407
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd408)&(airbnb$neighbourhood_group_cleansed == 'Queens')),"community_district"]<-408
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd409)&(airbnb$neighbourhood_group_cleansed == 'Queens')),"community_district"]<-409
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd410)&(airbnb$neighbourhood_group_cleansed == 'Queens')),"community_district"]<-410
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd411)&(airbnb$neighbourhood_group_cleansed == 'Queens')),"community_district"]<-411
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd412)&(airbnb$neighbourhood_group_cleansed == 'Queens')),"community_district"]<-412
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd413)&(airbnb$neighbourhood_group_cleansed == 'Queens')),"community_district"]<-413
+airbnb[which((airbnb$neighbourhood_cleansed %in% cd414)&(airbnb$neighbourhood_group_cleansed == 'Queens')),"community_district"]<-414
+```
+
+
+```{r map_data_clean2, include=FALSE}
+airbnbCD<-CD_fortified
+airbnbCD['price']<-NA
+airbnbCD['en_ro']<-NA
+airbnbCD['pr_ro']<-NA
+
+
+cd_number<-c(101:112,201:212,301:318,401:414,501:503)
+for (i in cd_number){
+  airbnbCD[which(airbnbCD$id == toString(i)),'price'] <-
+    colMeans(airbnb[which(airbnb$community_district==i),'price'],na.rm = TRUE)
+  airbnbCD[which(airbnbCD$id == toString(i)),'en_ro'] <-
+    colMeans(airbnb[which((airbnb$community_district==i)&(airbnb$room_type=='Entire home/apt')),'price'],na.rm = TRUE)
+  airbnbCD[which(airbnbCD$id == toString(i)),'pr_ro'] <-
+    colMeans(airbnb[which((airbnb$community_district==i)&(airbnb$room_type=='Private room')),'price'],na.rm = TRUE)
+}
+
+```
+
+Since locations for houses is significant, we want to see the spatial distribution of prices by room type. Therefore, two choropleth maps of average price for each community district ( please see the definition of “community district” in section 2 data source) are provided. 
+
+
+
+```{r 5plot_map, echo=FALSE, fig.height=7, fig.width=15, warning=FALSE}
+pp1<-ggmap(nyc2) +
+  geom_polygon(data = airbnbCD, aes( x = long, y = lat, group = group, fill = en_ro)) +
+  scale_fill_viridis_c(limits=c(0,500))+
+  labs(fill='Price of Entire Home/Apt',x="Longitude",y="Latitude")+
+  ggtitle("Price of Entire Home/Apt by NYC Community Districts")
+pp2<-ggmap(nyc2) +
+  geom_polygon(data = airbnbCD, aes( x = long, y = lat, group = group, fill = pr_ro)) +
+  scale_fill_viridis_c(limits=c(0,500))+
+  labs(fill='Price of Private Room',x="Longitude",y="Latitude")+
+  ggtitle("Price of Private Room by NYC Community Districts")
+grid.arrange(pp1,pp2,nrow=1,ncol=2)
+```
+
+The first map is for entire home/apt, and the second is for private room. We can observe that the entire homes and private rooms located in midtown and downtown manhattan are on the expensive side. We think three factors contribute to the high listing prices in midtown and downtown:
+
+(1) there are many subway lines accessible in those areas so that tourists prefer to stay in a convenient place; 
+
+(2) there are many tourist attractions around, such as the Statue of Liberty, Empire State Building and Times Square, so that those areas are top choices; 
+   
+(3) there are some new luxury buildings and fancy restaurants in that area ( especially in Midtown West and Tribeca).   
+
+
+We also find that the average price of private rooms in midtown are higher than that of entire homes in midtown, which is quite surprising. We suspect this could be because there are some listings for private rooms in luxury buildings in midtown, while the entire homes in such buildings are not listed. However, this is just our hypothesis and requires further investigation. For those regions with grey color filled, they are places like airports and parks, so no information is provided. 
+
+
+
+We are also interested in the quantitative distribution of prices, so we also drew histograms of prices. However, if we don’t drop outliers (we define outliers to be the data points with prices higher than (75% percentile + 1.5*interquartile range) and prices lower than (25% percentile - 1.5*interquartile range)), the graph will be highly skewed and can’t be seen clearly, so we dropped the outliers when plotting the price histograms. 
+
+
+```{r hist_data_clean, include=FALSE}
+two_type<-airbnb[which((airbnb$room_type == 'Entire home/apt')|(airbnb$room_type == 'Private room')),c('room_type','price')]
+
+entire_rr <- two_type[which(two_type$room_type == 'Entire home/apt'),'price']
+entire_upper <- 1.5 * (quantile(entire_rr$price,0.75)-quantile(entire_rr$price,0.25)) + 
+  quantile(entire_rr$price,0.75)
+entire_lower <- quantile(entire_rr$price,0.25) - 
+  1.5 * (quantile(entire_rr$price,0.75)-quantile(entire_rr$price,0.25))
+
+private_rr <- two_type[which(two_type$room_type == 'Private room'),'price']
+private_upper <- 1.5 * (quantile(private_rr$price,0.75)-quantile(private_rr$price,0.25)) + 
+  quantile(private_rr$price,0.75)
+private_lower <- quantile(private_rr$price,0.25) - 
+  1.5 * (quantile(private_rr$price,0.75)-quantile(private_rr$price,0.25))
+
+two_type <- two_type %>% filter(((room_type == 'Entire home/apt') & (price < entire_upper) 
+                                & (price > entire_lower)) |
+                                ((room_type == 'Private room') & (price < private_upper) 
+                                & (price > private_lower)))
+```  
+
+```{r 6plot_price_hist, echo=FALSE, fig.height=4, fig.width=8, warning=FALSE}
+ggplot(two_type, aes(x = price, y = ..density..)) + 
+  geom_histogram(bins = 20, colour = "#80593D", fill = "#9FC29F", boundary = 0) +
+  geom_density(color = "darkblue",bw=14) + 
+  facet_wrap(~room_type) +
+  ggtitle("2019 New York City Airbnb Price",
+          subtitle = "Price Density of NYC Airbnb by Entire Home/Apt and Private Room") +
+  labs(x = "Price (USD)", y = "Density") +
+  theme(plot.title = element_text(face = "bold")) +
+  theme(plot.subtitle = element_text(face = "bold", color = "grey35")) +
+  theme(plot.caption = element_text(color = "grey68"))
+```
+
+From the above histograms, we can detect that the distribution for private room prices has less variance compared with entire home/apt prices. Prices for both room types have a unimodal distribution, with the mode price for entire home around 150 dollars and mode price for private room around 75 dollars. We can also see that distribution of entire home price is right skewed. We suspect it is because there are more variance in the layouts of entire homes. Some entire homes can be so fancy that they will be able to ask for much higher price than the mode.
+
+
+```{r trans_data_clean, include=FALSE}
+airbnb_tmp<-airbnb[c('id','transit','price','room_type')]
+airbnb_transit<-subset(airbnb_tmp, room_type=='Entire home/apt'|room_type=='Private room')
+airbnb_transit[ , "transit_NA"]<-as.integer(as.logical(is.na(airbnb_transit$transit))) 
+
+#Select Transportation info in English only.
+
+airbnb_transit_tmp <- airbnb_transit[which(!grepl("[^\x01-\x7F]+",airbnb_transit$transit)),]
+airbnb_transit_eng <- airbnb_transit_tmp[which(!grepl("[^\u0001-\u007F]+",airbnb_transit$transit)),]
+airbnb_transit_eng$transit<-tolower(airbnb_transit_eng$transit)
+
+public<-c('subway','metro','line','subways','metros','lines', 'bus','buses','train','trains','express','expresses')
+publicx<-sapply(public,grepl,airbnb_transit_eng$transit)
+
+airbnb_transit_eng[ , "Public_Transportation"]<-ifelse(rowSums(publicx, na.rm = FALSE, dims = 1)>0,1,0)
+
+airbnb_transit_eng[,"Public_Transportation_Not_Mentioned"]<-ifelse(airbnb_transit_eng$transit_NA == 0 & airbnb_transit_eng$Public_Transportation ==0, 1, 0)
+
+
+dftransit_NA<-airbnb_transit_eng[c('id','transit_NA','price','room_type')]%>%subset(transit_NA==1, select =-transit_NA)
+dftransit_Public<-airbnb_transit_eng[c('id','price','Public_Transportation','room_type')]%>%subset(Public_Transportation==1, select =-Public_Transportation)
+dftransit_notPublic<-airbnb_transit_eng[c('id','price','room_type','Public_Transportation_Not_Mentioned')]%>%subset(Public_Transportation_Not_Mentioned==1, select =-Public_Transportation_Not_Mentioned)
+
+airbnb_transit<-bind_rows("Public_Transportation" = dftransit_Public,
+                           "Public_Transportation_Not_Mentioned" = dftransit_notPublic,
+                           "Transportation_NA" = dftransit_NA, 
+                           .id="Category")
+
+#Remove Outliers
+#NA
+NA_IQR=quantile(dftransit_NA$price)[4]-quantile(dftransit_NA$price)[3]
+NA_U=quantile(dftransit_NA$price)[4]+1.5*NA_IQR
+NA_L=quantile(dftransit_NA$price)[2]-1.5*NA_IQR
+dftransit_NA_mod<-dftransit_NA[which(dftransit_NA$price>NA_L & dftransit_NA$price<NA_U),]
+
+#Public Transportation
+P_IQR=quantile(dftransit_Public$price)[4]-quantile(dftransit_Public$price)[3]
+P_U=quantile(dftransit_Public$price)[4]+1.5*P_IQR
+P_L=quantile(dftransit_Public$price)[2]-1.5*P_IQR
+dftransit_Public_mod<-dftransit_Public[which(dftransit_Public$price>P_L & dftransit_Public$price<P_U),]
+
+#Public Transportation Not Mentioned
+nP_IQR=quantile(dftransit_notPublic$price)[4]-quantile(dftransit_notPublic$price)[3]
+nP_U=quantile(dftransit_notPublic$price)[4]+1.5*nP_IQR
+nP_L=quantile(dftransit_notPublic$price)[2]-1.5*nP_IQR
+dftransit_notPublic_mod<-dftransit_notPublic[which(dftransit_notPublic$price>nP_L & dftransit_notPublic$price<nP_U),]
+airbnb_transit_mod<-bind_rows("Public_Transportation" = dftransit_Public_mod,
+                           "Public_Transportation_Not_Mentioned" = dftransit_notPublic_mod,
+                           "Transportation_NA" = dftransit_NA_mod, 
+                           .id="Category")
+```
+
+
+As travellers may assume that airbnbs in more accessible areas might have higher price, we would like to verify this by investigating price over transportation choices. Among all the listings, we drew scatterplot, boxplot, and violin plot on the same graph to show the airbnb price categorized by availability of transportation near the house location faceted by two major room types (entire home/apt, private room). We have a total of three categories: Public_Transportation (listings for which the hosts provide public transportation options nearby in their transit description about the houses), Public_Transportation_Not_Mentioned (listings for which the hosts do not mention public transportation options in their transit description about the houses), and Transportation_NA (listings for which the hosts do not write transit descriptions about the houses). 
+
+In the process of forming the graph, we removed the data points with extremely high prices  in order to show the shapes of the violins and boxes clearly without the interruption of outliers (outliers here have the same definition as above).
+
+
+
+
+```{r 7plot_trans, echo=FALSE, fig.height=4, fig.width=10, warning=FALSE}
+ggplot()+
+  ggtitle("2019 New York City Airbnb Price Respecting to Transportation",
+          subtitle = "Price Distribution of NYC Airbnb by Entire Home/Apt and Private Room") +
+  theme(plot.title = element_text(face = "bold")) +
+  scale_x_discrete(labels=c('Public Transit','Public Transit not mentioned','N/A'))+
+  theme(plot.subtitle = element_text(face = "bold", color = "grey35")) +
+  theme(plot.caption = element_text(color = "grey68"))+
+  labs(y='Price (USD)', x='Types of Transit Description')+
+  geom_violin(data=airbnb_transit_mod,aes(x=Category,y=price), alpha=0.01, color="darkolivegreen4")+
+  geom_point(data=airbnb_transit_mod,aes(x=Category,y=price),color="darkgreen",size=1,alpha=0.01)+
+  geom_boxplot(data=airbnb_transit_mod,aes(x=Category,y=price),color="dodgerblue4",alpha=0.01)+
+  facet_grid(.~room_type)
+```
+
+
+From this graph, we found that the middle of the price distributions for all three categories have similar values and are all around $150 per night, with the ones which do not have transportation options in the descriptions slightly higher than the ones with transportation options. This finding is kind of surprising, because people may assume that houses that have more transportation choices around would have higher prices than those do not have. However, our finding turns out to be that the existence of transportation do not increase the house prices. When travelers are selecting houses on Airbnb, it seems that they do not need to worry about the higher price that results from more convenient transportation options. 
+
+
+
+### Part 3 - Ratings/comments
+
+Apart from room type and price, reviews/comments is another area where travellers would pay a lot of attention to. Thus, this is the third aspect we want to analyze.
+
+First, we analyzed the average review scores distribution by the five boroughs using the following boxplot.
+
+```{r 8,fig.height = 6, fig.width = 8,echo=FALSE, warning=FALSE}
+#review scores vs. neighbourhoods plot
+airbnb_new <- airbnb %>%
+  drop_na("review_scores_rating")
+
+ggplot(airbnb_new, aes(x=reorder(neighbourhood_group_cleansed, -review_scores_rating, median), 
+                       y = review_scores_rating)) + 
+  geom_boxplot(fill = "lightblue", color = "blue") + 
+  xlab("Neighborhood") + 
+  ylab("Review Scores") +  
+  labs(title = "Boxplot of Review Scores by Neighborhood") + 
+  theme_grey(16)
+```
+
+From the above graph, we are able to conclude the following three main points:
+
+1. We can see that the median review scores are very similar in five neighborhoods. The medians are all around 95 out of 100, which indicates that the median quality of listings in New York City are quite satisfying. 
+
+2. While the review scores in all five boroughs have outliers on the lower end, Brooklyn, Manhattan and Queens have some scores that are extremely low (lower than 40), this also makes sense as majority of the listings are in these three areas, therefore the scores will have larger variance. 
+
+3. We also discover that the 25th percentile of review scores are all above 90 in five boroughs, so if visitors set the filter score to 90, they still have 75% of the properties to choose from.
+
+
+Now let’s have a look at the detailed comment words that travellers have posted on Airbnb APP and analyze on the wording part to get a sense of what sentiments and types of emotion typically appear in their comments.
+
+
+Since there are about 1 million comments for all airbnb listings, the graph produced will become over-crowded. To overcome this we chose to sample about 10% of the entire data and did analysis on. Since many comments contain emoji and non-ASCII characters, we decided to transform these terms into ASCII characters. Then we extract only comments in English to analyze.
+
+
+We analyzed all the words used in the comments over 2009-2019 to assign them into different emotion categories, including anger, anticipation, disgust, fear, joy, sadness, surprise, and trust. We counted the percentage of words that belong to each emotion category for every year, and the emotion words usage over time is shown in the following graph.
+
+```{r 20min, eval=FALSE, include=FALSE}
+total <- merge(airbnb, reviews, by.x="id", by.y="listing_id")
+total_sample <- total[sample(nrow(total), 100000), ]
+total_sample[, ncol(total_sample)] <- sapply(total_sample[, ncol(total_sample)], replace_emoji)
+total_sample[, ncol(total_sample)] <- sapply(total_sample[, ncol(total_sample)], replace_non_ascii)
+total_sample$language <- textcat(total_sample$comments)
+total_sample_english <- total_sample[total_sample$language == "english",]
+```
+
+
+```{r include=FALSE}
+total_sample_english <- read_csv("total_sample_english.csv")
+total_sample_english$date_object <- as.Date(total_sample_english$date, format="%d/%m/%Y")
+total_sample_english$year_object <- as.numeric(format(total_sample_english$date_object,'%Y'))
+```
+
+
+```{r 9,fig.width = 8, fig.height = 6,echo=FALSE, warning=FALSE}
+#sentiment analysis plot
+
+
+
+emotions <- total_sample_english %>% 
+  unnest_tokens(word, comments) %>%                           
+  anti_join(stop_words, by = "word") %>%                  
+  filter(!grepl('[0-9]', word)) %>%
+  left_join(get_sentiments("nrc"), by = "word") %>%
+  filter(!(sentiment == "negative" | sentiment == "positive")) %>%
+  group_by(year_object, sentiment) %>%
+  summarize(freq = n()) %>%
+  mutate(percent=round(freq/sum(freq)*100)) %>%
+  ungroup()
+
+
+ggplot(emotions, aes(x=year_object, y=percent, color=sentiment, group=sentiment)) +
+geom_line(size=1) +
+geom_point(size=0.5) +
+scale_x_continuous(breaks=seq(2008, 2019, 1)) +
+xlab("Year") +
+ylab("Emotion words count (%)") +
+ggtitle("Emotion Words Expressed in Comments")
+```
+
+It's easy to see that over the 10-year period, most of the people's comments about airbnb contain words that express trust, joy, and anticipation, which are all positive sentiment. Among all, the most frequent emotion is trust, which exceeds 30% of the entire words used. This finding indicates that people were satisfied with the quality of airbnb in NYC, and seldom expressed negative emotions(eg. fear, disgust, sadness) about their staying. This is consistent with the boxplot of review scores we presented before. Both graphs indicate that people are satisfied with their airbnb experience in NYC in general.
+
+
+
+
+## VI. Interactive component
+
+```{r map_data_clean3, include=FALSE}
+CDcopy<-CD
+CDjoin<-airbnbCD[c('id','price')] %>% distinct()
+CDjoin['price']<-round(CDjoin['price'],2)
+CDjoin['numAirbnb']<-NA
+CDjoin['rating']<-NA
+CDjoin['accuracy']<-NA
+CDjoin['cleanliness']<-NA
+CDjoin['checkin']<-NA
+CDjoin['communication']<-NA
+CDjoin['location']<-NA
+
+CDjoin['name']<-c('Manhattan Community District 1','Manhattan Community District 2',
+         'Manhattan Community District 3','Manhattan Community District 4',
+         'Manhattan Community District 5','Manhattan Community District 6',
+         'Manhattan Community District 7','Manhattan Community District 8',
+         'Manhattan Community District 9','Manhattan Community District 10',
+         'Manhattan Community District 11','Manhattan Community District 11',
+         'Central Park','Bronx Community District 1','Bronx Community District 2',
+         'Bronx Community District 3','Bronx Community District 4','Bronx Community District 5',
+         'Bronx Community District 6','Bronx Community District 7','Bronx Community District 8',
+         'Bronx Community District 9','Bronx Community District 10','Bronx Community District 11',
+         'Bronx Community District 12','Van Cortlandt Park','New York Botanical Garden & Bronx Zoo',
+         'Pelham Bay Park','Brooklyn Community District 1',
+         'Brooklyn Community District 2','Brooklyn Community District 3','Brooklyn Community District 4',
+         'Brooklyn Community District 5','Brooklyn Community District 6','Brooklyn Community District 7',
+         'Brooklyn Community District 8','Brooklyn Community District 9','Brooklyn Community District 10',
+         'Brooklyn Community District 11','Brooklyn Community District 12','Brooklyn Community District 13',
+         'Brooklyn Community District 14','Brooklyn Community District 15','Brooklyn Community District 16',
+         'Brooklyn Community District 17','Brooklyn Community District 18','Prospect Park',
+         'Floyd Bennett Field','Queens Community District 1','Queens Community District 2',
+         'Queens Community District 3','Queens Community District 4','Queens Community District 5',
+         'Queens Community District 6','Queens Community District 7','Queens Community District 8',
+         'Queens Community District 9','Queens Community District 10','Queens Community District 11',
+         'Queens Community District 12','Queens Community District 13','Queens Community District 14',
+         'LaGuardia Airport','Flushing Meadows Corona Park','Forest Park',
+         'John F. Kennedy International Airport','Broad Channel','Staten Island Community District 1',
+         'Staten Island Community District 2','Staten Island Community District 3','Great Kills Park')
+
+for (i in cd_number){
+  CDjoin[which(CDjoin$id == toString(i)),'numAirbnb']<-
+    nrow(airbnb[which(airbnb$community_district == i),])
+  CDjoin[which(CDjoin$id == toString(i)),'rating']<-
+    colMeans(airbnb[which(airbnb$community_district==i),'review_scores_rating'],na.rm = TRUE)
+  
+  CDjoin[which(CDjoin$id == toString(i)),'accuracy']<-
+    colMeans(airbnb[which(airbnb$community_district==i),'review_scores_accuracy'],na.rm = TRUE)
+  CDjoin[which(CDjoin$id == toString(i)),'cleanliness']<-
+    colMeans(airbnb[which(airbnb$community_district==i),'review_scores_cleanliness'],na.rm = TRUE)
+  CDjoin[which(CDjoin$id == toString(i)),'checkin']<-
+    colMeans(airbnb[which(airbnb$community_district==i),'review_scores_checkin'],na.rm = TRUE)
+  CDjoin[which(CDjoin$id == toString(i)),'communication']<-
+    colMeans(airbnb[which(airbnb$community_district==i),'review_scores_communication'],na.rm = TRUE)
+  CDjoin[which(CDjoin$id == toString(i)),'location']<-
+    colMeans(airbnb[which(airbnb$community_district==i),'review_scores_location'],na.rm = TRUE)
+}
+
+CDjoin['rating']<-round(CDjoin['rating'],2)
+CDjoin['accuracy']<-round(CDjoin['accuracy'],2)
+CDjoin['cleanliness']<-round(CDjoin['cleanliness'],2)
+CDjoin['checkin']<-round(CDjoin['checkin'],2)
+CDjoin['communication']<-round(CDjoin['communication'],2)
+CDjoin['location']<-round(CDjoin['location'],2)
+CDjoin['attraction']<-'None'
+
+
+CDjoin[which(CDjoin$id=='101'),'attraction']<-
+  "<b><a href=' '>Statue of Liberty National Monument</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Castle_Clinton'>Castle Clinton National Monument</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/The_Battery_(Manhattan)'>Battery Park</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Charging_Bull'>Charging Bull</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Federal_Hall'>Federal Hall</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/New_York_City_Hall'>New York City Hall</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Trinity_Church_(Manhattan)'>Trinity Church</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Woolworth_Building'>The Woolworth Building</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/National_September_11_Memorial_%26_Museum'>9/11 Memorial Museum</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/One_World_Trade_Center'>One World Trade Center</a ></b>,
+<b><a href='https://en.wikipedia.org/wiki/One_World_Trade_Center'>One World Observatory</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Brookfield_Place_(New_York_City)'>Brookfield Place</a ></b>"
+CDjoin[which(CDjoin$id=='102'),'attraction']<-
+  "<b><a href='https://en.wikipedia.org/wiki/Washington_Square_Park'>Washingtong Square Park</a ></b>,
+<b><a href='https://en.wikipedia.org/wiki/Hudson_River_Park'>Hudson River Park Trust</a ></b>,
+<b><a href='https://en.wikipedia.org/wiki/Whitney_Museum_of_American_Art'>Whitney Museum of American Art</a ></b>"
+CDjoin[which(CDjoin$id=='103'),'attraction']<-
+  "<b><a href='https://en.wikipedia.org/wiki/Chinatown,_Manhattan'>Chinatown</a ></b>,
+<b><a href='https://en.wikipedia.org/wiki/Little_Italy,_Manhattan'>Little Italy</a ></b>,
+<b><a href='https://en.wikipedia.org/wiki/New_Museum'>New Museum</a ></b>,
+<b><a href='https://en.wikipedia.org/wiki/Lower_East_Side_Tenement_Museum'>Tenement Museum</a ></b>,
+<b><a href='https://en.wikipedia.org/wiki/South_Street_(Manhattan)'>South Street</a ></b>"
+CDjoin[which(CDjoin$id=='104'),'attraction']<-
+  "<b><a href='https://en.wikipedia.org/wiki/Chelsea_Market'>Chelsea Market</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Columbus_Circle'>Columbus Circle</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/High_Line'>The High Line</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Circle_Line_Sightseeing_Cruises'>Circle Line Sightseeing Cruises</a ></b>"
+CDjoin[which(CDjoin$id=='105'),'attraction']<-
+  "<b><a href='https://en.wikipedia.org/wiki/Madame_Tussauds_New_York'>Madame Tussauds New York</a ></b>, <b><a href='https://en.wikipedia.org/wiki/Times_Square'>Times Square</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Madison_Square_Garden'>Madison Square Garden</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Bryant_Park'>Bryant Park</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/St._Patrick%27s_Cathedral_(Manhattan)'>St. Patrick's Cathedral</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/30_Rockefeller_Plaza#Observation_deck'>Top of the Rock</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Museum_of_Modern_Art'>The Museum of Modern Art</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Radio_City_Music_Hall'>Radio City Music Hall</a ></b>"
+CDjoin[which(CDjoin$id=='106'),'attraction']<-
+  "<b><a href='https://en.wikipedia.org/wiki/Flatiron_Building'>Flatiron Building</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Museum_of_Sex'>Museum of Sex</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Museum_of_the_City_of_New_York'>Museum of the City of New York</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Jewish_Museum_(Manhattan)'>The Jewish Museum</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Solomon_R._Guggenheim_Museum'>Solomon R. Guggenheim Museum</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Frick_Collection'>The Frick Collection</a ></b>"
+CDjoin[which(CDjoin$id=='107'),'attraction']<-
+  "<b><a href='https://en.wikipedia.org/wiki/Riverside_Park_(Manhattan)'>Riverside Park</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/American_Museum_of_Natural_History'>American Museum of Natural History</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/New-York_Historical_Society'>New-York Historical Society</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/American_Museum_of_Natural_History'>American Museum of Natural History</a ></b>,
+<b><a href='https://en.wikipedia.org/wiki/Lincoln_Center'>Lincoln Center for the Performing Arts</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Metropolitan_Opera_House_(Lincoln_Center)'>Metropolitan Opera House</a ></b>"
+CDjoin[which(CDjoin$id=='108'),'attraction']<-"<b><a href='https://en.wikipedia.org/wiki/Queensboro_Bridge'>Ed Koch Queensboro Bridge</a ></b>"
+CDjoin[which(CDjoin$id=='109'),'attraction']<-
+  "<b><a href='https://en.wikipedia.org/wiki/Cathedral_of_St._John_the_Divine'>The Cathedral Church of St. John the Divine</a ></b>"
+CDjoin[which(CDjoin$id=='110'),'attraction']<-"<b><a href='https://en.wikipedia.org/wiki/Apollo_Theater'>Apollo Theater</a ></b>"
+CDjoin[which(CDjoin$id=='111'),'attraction']<-
+  "<b><a href='https://en.wikipedia.org/wiki/Museum_of_the_City_of_New_York'>Museum of the City of New York</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Conservatory_Garden'>Conservatory Garden</a ></b>"
+
+
+CDjoin[which(CDjoin$id=='204'),'attraction']<-"<b><a href='https://en.wikipedia.org/wiki/Yankee_Stadium'>Yankee Stadium</a ></b>"
+CDjoin[which(CDjoin$id=='208'),'attraction']<-"<b><a href='https://en.wikipedia.org/wiki/Wave_Hill'>Wave Hill Public Gardens</a ></b>"
+CDjoin[which(CDjoin$id=='211'),'attraction']<-
+  "<b><a href='https://en.wikipedia.org/wiki/The_Cloisters'>The Met Cloisters</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/George_Washington_Bridge'>George Washington Bridge</a ></b>"
+
+CDjoin[which(CDjoin$id=='302'),'attraction']<-
+  "<b><a href='https://en.wikipedia.org/wiki/Brooklyn_Bridge'>Brooklyn Bridge</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/New_York_Transit_Museum'>New York Transit Museum</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Brooklyn_Heights_Promenade'>Brooklyn Heights Promenage</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Jane%27s_Carousel'>Janes Carousel</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Brooklyn_Bridge_Park'>Brooklyn Bridge Park</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Manhattan_Bridge'>Manhattan Bridge</a ></b>"
+
+
+CDjoin[which(CDjoin$id=='309'),'attraction']<-"<b><a href='https://en.wikipedia.org/wiki/Brooklyn_Museum'>Brooklyn Museum</a ></b>"
+CDjoin[which(CDjoin$id=='311'),'attraction']<-
+  "<b><a href='https://en.wikipedia.org/wiki/New_York_Aquarium'>New York Aquarium</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Coney_Island'>Coney Island</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/Verrazzano-Narrows_Bridge'>Verrazzano-Narrows Bridge</a ></b>"
+
+CDjoin[which(CDjoin$id=='401'),'attraction']<-"<b><a href='https://en.wikipedia.org/wiki/Museum_of_the_Moving_Image'>Museum of the Moving Image</a ></b>"
+CDjoin[which(CDjoin$id=='402'),'attraction']<-
+  "<b><a href='https://en.wikipedia.org/wiki/Gantry_Plaza_State_Park'>Gantry Plaza State Park</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/MoMA_PS1'>MoMA PS1</a ></b>"
+CDjoin[which(CDjoin$id=='407'),'attraction']<-"<b><a href='https://en.wikipedia.org/wiki/Chinatowns_in_Queens'>Flushing Chinatown</a ></b>"
+
+CDjoin[which(CDjoin$id=='501'),'attraction']<-
+  "<b><a href='https://en.wikipedia.org/wiki/Sailors%27_Snug_Harbor'>Snug Harbor Cultural Center & Botanical Garden</a ></b>, 
+<b><a href='https://en.wikipedia.org/wiki/New_York_Harbor'>New York Harbor</a ></b>"
+
+
+
+
+CDmerge<-geo_join(CDcopy,CDjoin,'boro_cd','id') 
+
+
+```
+
+In the project, we include a total of approximately 30,000 Airbnb listings in the analysis. The map below contains the summary information for each of them. On the map, the circles indicate the number of airbnb listings in the surrounding areas. By simply clicking on the circles, the map will zoom-in to that area. Then you are able to see more circles within that area until seeing a blue pin. The blue pin shows the exact location of an airbnb. Clicking on the pin enables you to see the name of the home and some basic information about it, including a room type, average price, and average review score. Viewing the infobox, users can decide whether they would like to see more information about the house or not. If users are interested in the airbnb, they can click the name of the airbnb and then be navigated to its corresponding Airbnb webpage.  
+
+Shiny Link: https://xiayunj.shinyapps.io/Airbnb_NYC_All/
+
+
+```{r 10shinyAll, echo=FALSE}
+knitr::include_app("https://xiayunj.shinyapps.io/Airbnb_NYC_All/",height="900px")
+```
+
+To explore the average price and review scores in each community district, we provide the following interactive map.
+
+
+1. Heat Map about Average Price
+
+As price is one of the most important factors that determines people’s choice of airbnb, the project has discussed some aspects of airbnb prices. Moreover, in the interactive part, a heat map of average price is designed. In the heat map, users could figure out housing prices in each community district at a glance. Clicking on the district of interest, detailed information including average price per night, average customer review score, and the total number of airbnbs in the district are listed. So that users could be guided by such elements.
+
+Moreover, travellers may also be interested in what attractions and spots are worth visiting around each neighbourhood. Here in this map, we also provide the famous attractions in each community district. Clicking the name of attraction in the infobox, travellers will be directed to wikipedia page of the attraction. 
+
+For those regions with grey color filled, they are places like airports and parks (exact information about the grey region is shown when you click the region). Since no Airbnb can possibly exist at those areas, no information about the rating/price/number of houses is provided.
+
+
+
+2. Heat Map about Average Review Scores
+
+The previous finding about review scores by neighbourhood shows that the average review scores for all five boroughs are above 90%. To explore the review scores within each community district, we provide the following interactive heat map. According to Average Customer Review Score, each community district are colored differently. By viewing the heatmap, users can intuitively learn airbnb users’ ratings for each district. 
+
+Apart from the overall high ratings across all five boroughs, a traveller may also want to know about the detailed ratings for a house, including the accuracy of description score, the cleanliness score, the checkin score, the communication score, and the location score. Then clicking districts of interest, all related scores are shown, including average overall rating score (in percentage) as well as the average detailed rating scores for these five aspects (out of 10). Users could observe detailed evaluation of airbnbs in the corresponding area and decide if airbnbs in the district are where they want to stay.
+
+After looking at the interactive plot, travellers could get an understanding about which area is more suitable for them.
+
+Shiny Link: https://xiayunj.shinyapps.io/Airbnb_NYC_Price_Rating/
+
+
+
+```{r 11shinyTwo, echo=FALSE}
+knitr::include_app("https://xiayunj.shinyapps.io/Airbnb_NYC_Price_Rating/",height="600px")
+```
+
+## VII. Conclusion
+
+In the whole project, we investigated airbnb listing in New York City and got three key findings:
+
+1. There are four room types in New York City. Private rooms and entire homes constitute majority of the hostings. The distribution of the number of available days in a year for both entire homes and private rooms have two peaks: one peak is above 300 days and another peak is below 100 days.
+
+2. Price range for most of airbnb listings in New York City is [0,300]. Listings in Manhattan is slightly higher than the other four boroughs. In addition, more convenient public transportation does not affect airbnb’s price. 
+
+3. People who have booked airbnb in New York City are mostly satisfied with their stays regardless of which boroughs they lived in and which year they visited NYC.
+
+Finally, we utilized our data and findings to build two interactive maps. By using those two shiny apps, airbnb seekers could not only obtain an idea about which area to stay, but also can directly filter Airbnb selections through price and room type to visualize selections on the map of New York City.
+
+
+
+**Limitations: **
+
+Remember that we did random sampling on the entire set of 1 million reviews to extract about 10% of them for analysis. If we have higher computational power, we would be able to include all the comments for analysis of sentiments instead of analysing on the sample.
+
+In interactive parts, we added clickable links, which navigates to its corresponding Airbnb website. However, since our dataset is not up-to-date, some listings might be outdated after some time. Therefore, when we click on those expired links, users would be directed to Airbnb home page instead of its corresponding website.
+
+**Future direction:**
+
+In the future, we would like to analyze how the Airbnb price relates to crime rates in different districts in NYC and draw maps to show the findings.
+
+
+**Lessons learned:**
+
+This project is a great opportunity for us to enhance our technical and soft skills. Working with multiple data files helped us strengthen our skills in data collection, cleaning and manipulation. Through our project, we also learned how to acquire google APIs; how to effectively use Github; how to deploy different R libraries especially shiny; and how to do text mining and sentiment analysis in R. Apart from the hard skills, we also learned how to effectively in a team. For example, we gained experience in brainstorming with teammates, in understanding and reconciling different opinions, and in sharing ideas and giving constructive feedback. 
+
+
+
